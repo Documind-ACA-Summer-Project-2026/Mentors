@@ -12,7 +12,7 @@ def seed_db():
     print("Starting database seeding...")
     
     # 1. Seed Demo User
-    demo_email = "demo@example.com"
+    demo_email = "demo@google.com"
     demo_name = "Demo User"
     demo_password = "Password123"
     hashed = hash_password(demo_password)

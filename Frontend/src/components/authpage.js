@@ -3,7 +3,7 @@
 import { useState, useEffect, useContext } from "react";
 import { GoogleLogin } from "@react-oauth/google";
 import { AuthContext } from "../context/AuthContext";
-import { apiPost } from "../utils/api";
+import { apiPost, getErrorMessage } from "../utils/api";
 
 export default function AuthPage({ onAuthSuccess }) {
   const auth = useContext(AuthContext);
@@ -31,7 +31,6 @@ export default function AuthPage({ onAuthSuccess }) {
     event.preventDefault();
     setLoading(true);
     setLocalError("");
-    console.log("handleSubmit triggered. Mode:", mode, "Email:", email);
     
     try {
       const endpoint = mode === "signIn" ? "/api/auth/signin" : "/api/auth/signup";
@@ -41,29 +40,27 @@ export default function AuthPage({ onAuthSuccess }) {
         ...(mode === "signUp" && { name }),
       };
 
-      console.log("Calling API endpoint:", endpoint, "with payload:", payload);
       const data = await apiPost(endpoint, payload);
-      console.log("API response received:", data);
 
       if (data.status === "verification_required") {
-        console.log("Setting mode to verifyOtp. Target email:", data.email);
         setVerificationEmail(data.email);
         setMode("verifyOtp");
         setOtp("");
       } else {
-        console.log("Verification not required. User data:", data.user);
         auth.login(null, data.user);
         onAuthSuccess?.(data.user);
       }
     } catch (err) {
-      console.error("Authentication error caught:", err);
-      if (err.message.includes("verification pending") || err.message.includes("pending")) {
-        console.log("Verification pending. Redirecting to verifyOtp for:", email);
+      console.error("Authentication error:", err);
+      
+      // Check for specific error messages indicating verification pending
+      const errorMsg = getErrorMessage(err);
+      if (err.message?.includes("verification pending") || errorMsg.includes("verification")) {
         setVerificationEmail(email);
         setMode("verifyOtp");
         setOtp("");
       } else {
-        setLocalError(err.message || "Authentication failed");
+        setLocalError(errorMsg || "Authentication failed. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -74,20 +71,18 @@ export default function AuthPage({ onAuthSuccess }) {
     event.preventDefault();
     setLoading(true);
     setLocalError("");
-    console.log("handleOtpSubmit triggered. Email:", verificationEmail, "OTP:", otp);
 
     try {
       const data = await apiPost("/api/auth/verify-otp", {
         email: verificationEmail,
         otp
       });
-      console.log("OTP Verification response:", data);
 
       auth.login(null, data.user);
       onAuthSuccess?.(data.user);
     } catch (err) {
       console.error("OTP verification error:", err);
-      setLocalError(err.message || "OTP verification failed");
+      setLocalError(getErrorMessage(err) || "OTP verification failed. Please check and try again.");
     } finally {
       setLoading(false);
     }
@@ -96,17 +91,15 @@ export default function AuthPage({ onAuthSuccess }) {
   const handleResendOtp = async () => {
     setLoading(true);
     setLocalError("");
-    console.log("handleResendOtp triggered for:", verificationEmail);
 
     try {
       const data = await apiPost("/api/auth/resend-otp", {
         email: verificationEmail
       });
-      console.log("Resend OTP response:", data);
       alert(data.message || "Verification code resent successfully!");
     } catch (err) {
       console.error("Resend OTP error:", err);
-      setLocalError(err.message || "Failed to resend verification code");
+      setLocalError(getErrorMessage(err) || "Failed to resend verification code. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -116,18 +109,16 @@ export default function AuthPage({ onAuthSuccess }) {
     event.preventDefault();
     setLoading(true);
     setLocalError("");
-    console.log("handleForgotPasswordSubmit triggered. Email:", email);
 
     try {
       const data = await apiPost("/api/auth/forgot-password", { email });
-      console.log("Forgot password API response:", data);
       setVerificationEmail(email);
       setMode("resetPassword");
       setOtp("");
       setNewPassword("");
     } catch (err) {
       console.error("Forgot password error:", err);
-      setLocalError(err.message || "Failed to send reset code");
+      setLocalError(getErrorMessage(err) || "Failed to send password reset code. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -137,7 +128,6 @@ export default function AuthPage({ onAuthSuccess }) {
     event.preventDefault();
     setLoading(true);
     setLocalError("");
-    console.log("handleResetPasswordSubmit triggered. Email:", verificationEmail, "OTP:", otp);
 
     try {
       const data = await apiPost("/api/auth/reset-password", {
@@ -145,7 +135,6 @@ export default function AuthPage({ onAuthSuccess }) {
         otp,
         new_password: newPassword
       });
-      console.log("Reset password API response:", data);
       alert("Password has been reset successfully! Please sign in with your new password.");
       setMode("signIn");
       setPassword("");
@@ -153,7 +142,7 @@ export default function AuthPage({ onAuthSuccess }) {
       setEmail(verificationEmail);
     } catch (err) {
       console.error("Reset password error:", err);
-      setLocalError(err.message || "Failed to reset password");
+      setLocalError(getErrorMessage(err) || "Failed to reset password. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -162,17 +151,15 @@ export default function AuthPage({ onAuthSuccess }) {
   const handleGoogleSuccess = async (credentialResponse) => {
     setLoading(true);
     setLocalError("");
-    console.log("Google Auth Success. Verifying with backend...");
     try {
       const jwtToken = credentialResponse.credential;
       const data = await apiPost("/api/auth/google", { token: jwtToken });
-      console.log("Google Auth backend response:", data);
 
       auth.login(null, data.user);
       onAuthSuccess?.(data.user);
     } catch (err) {
-      console.error("Google login backend error:", err);
-      setLocalError(err.message || "Google login failed");
+      console.error("Google login error:", err);
+      setLocalError(getErrorMessage(err) || "Google login failed. Please try again.");
     } finally {
       setLoading(false);
     }

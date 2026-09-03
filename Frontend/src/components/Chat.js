@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { apiGet } from "../utils/api";
+import { apiGet, getErrorMessage } from "../utils/api";
 
 export default function Chat({ activeChatId }) {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [loadingMessages, setLoadingMessages] = useState(false);
+    const [error, setError] = useState(null);
+    const [errorDetails, setErrorDetails] = useState(null);
     
     const messagesEndRef = useRef(null);
     const textareaRef = useRef(null);
@@ -17,12 +19,14 @@ export default function Chat({ activeChatId }) {
         if (!activeChatId) {
             const timer = setTimeout(() => {
                 setMessages([]);
+                setError(null);
             }, 0);
             return () => clearTimeout(timer);
         }
 
         const fetchMessages = async () => {
             setLoadingMessages(true);
+            setError(null);
             try {
                 const data = await apiGet(`/api/chats/${activeChatId}/messages`);
                 setMessages(
@@ -34,6 +38,9 @@ export default function Chat({ activeChatId }) {
                 );
             } catch (err) {
                 console.error("Failed to load messages:", err);
+                setError("Failed to load chat history");
+                setErrorDetails(getErrorMessage(err));
+                setMessages([]);
             } finally {
                 setLoadingMessages(false);
             }
@@ -83,6 +90,7 @@ export default function Chat({ activeChatId }) {
 
         setMessages((prev) => [...prev, userMsg]);
         setInput("");
+        setError(null);
         setLoading(true);
 
         requestAnimationFrame(() => {
@@ -105,12 +113,13 @@ export default function Chat({ activeChatId }) {
                     chat_id: activeChatId,
                     message: userMsgText
                 }),
-                credentials: "same-origin"
+                credentials: "same-origin",
+                timeout: 60000 // 60 second timeout for streaming
             });
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.detail || "Server error occurred");
+                throw new Error(errData.detail || errData.message || "Server error occurred");
             }
 
             // Append bot message placeholder
@@ -129,61 +138,88 @@ export default function Chat({ activeChatId }) {
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let accumulatedText = "";
+            let hasError = false;
 
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
 
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split("\n");
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split("\n");
 
-                for (const line of lines) {
-                    const trimmedLine = line.trim();
-                    if (trimmedLine.startsWith("data: ")) {
-                        const dataStr = trimmedLine.slice(6).trim();
-                        if (dataStr === "[DONE]") {
-                            break;
-                        }
-                        try {
-                            const parsed = JSON.parse(dataStr);
-                            if (parsed.text) {
-                                accumulatedText += parsed.text;
-                                setMessages((prev) =>
-                                    prev.map((msg) =>
-                                        msg.id === botMsgId
-                                            ? { ...msg, text: accumulatedText }
-                                            : msg
-                                    )
-                                );
-                            } else if (parsed.error) {
-                                console.warn("Stream error parsed:", parsed.error);
-                                accumulatedText = `Error: ${parsed.error}`;
-                                setMessages((prev) =>
-                                    prev.map((msg) =>
-                                        msg.id === botMsgId
-                                            ? { ...msg, text: accumulatedText }
-                                            : msg
-                                    )
-                                );
+                    for (const line of lines) {
+                        const trimmedLine = line.trim();
+                        if (trimmedLine.startsWith("data: ")) {
+                            const dataStr = trimmedLine.slice(6).trim();
+                            if (dataStr === "[DONE]") {
+                                break;
                             }
-                        } catch (e) {
-                            // Suppress parsing errors for partial segments
+                            try {
+                                const parsed = JSON.parse(dataStr);
+                                if (parsed.text) {
+                                    accumulatedText += parsed.text;
+                                    setMessages((prev) =>
+                                        prev.map((msg) =>
+                                            msg.id === botMsgId
+                                                ? { ...msg, text: accumulatedText }
+                                                : msg
+                                        )
+                                    );
+                                } else if (parsed.error) {
+                                    hasError = true;
+                                    console.warn("Stream error:", parsed.error);
+                                    accumulatedText = `⚠️ Error: ${parsed.error}`;
+                                    setMessages((prev) =>
+                                        prev.map((msg) =>
+                                            msg.id === botMsgId
+                                                ? { ...msg, text: accumulatedText }
+                                                : msg
+                                        )
+                                    );
+                                    setError("Failed to process request");
+                                    setErrorDetails(parsed.error);
+                                    break;
+                                }
+                            } catch (parseErr) {
+                                // Suppress parsing errors for partial segments
+                                console.debug("Parse error for chunk:", parseErr);
+                            }
                         }
                     }
                 }
+            } catch (streamErr) {
+                console.error("Stream reading error:", streamErr);
+                if (!hasError) {
+                    setError("Stream interrupted");
+                    setErrorDetails("Connection was interrupted while streaming response");
+                    setMessages((prev) => {
+                        const exists = prev.some(m => m.id === botMsgId);
+                        if (exists) {
+                            return prev.map(msg =>
+                                msg.id === botMsgId
+                                    ? { ...msg, text: "⚠️ Error: Connection was interrupted. Please try again." }
+                                    : msg
+                            );
+                        }
+                        return prev;
+                    });
+                }
             }
         } catch (err) {
-            console.warn("Failed to send message/stream:", err);
+            console.error("Chat error:", err);
             
-            // Clean up loader and add fallback error message
+            const errorMsg = getErrorMessage(err);
             setLoading(false);
+            setError("Failed to send message");
+            setErrorDetails(errorMsg);
+            
             setMessages((prev) => {
-                // If bot message placeholder was already added, update it. Otherwise add new one.
                 const exists = prev.some(m => m.id === botMsgId);
                 if (exists) {
                     return prev.map(msg => 
                         msg.id === botMsgId 
-                            ? { ...msg, text: "Sorry, I encountered an error while processing your request. Please check if your Gemini API key is configured correctly in the backend." }
+                            ? { ...msg, text: `⚠️ Error: ${errorMsg}` }
                             : msg
                     );
                 } else {
@@ -192,7 +228,7 @@ export default function Chat({ activeChatId }) {
                         {
                             id: botMsgId,
                             from: "bot",
-                            text: "Sorry, I encountered an error while processing your request. Please check if your Gemini API key is configured correctly in the backend.",
+                            text: `⚠️ Error: ${errorMsg}`,
                         }
                     ];
                 }
@@ -227,6 +263,26 @@ export default function Chat({ activeChatId }) {
                 <span className="text-xs text-green-400">● Online</span>
             </div>
 
+            {/* Error Banner */}
+            {error && (
+                <div className="bg-red-900/30 border-b border-red-700 px-4 py-3">
+                    <div className="flex items-start justify-between">
+                        <div>
+                            <p className="text-sm font-semibold text-red-400">{error}</p>
+                            {errorDetails && (
+                                <p className="text-xs text-red-300 mt-1">{errorDetails}</p>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => setError(null)}
+                            className="text-red-400 hover:text-red-300 ml-2"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 py-3 scrollbar-thumb-cyan-600 space-y-3">
                 {loadingMessages ? (
@@ -240,9 +296,10 @@ export default function Chat({ activeChatId }) {
                             className={`flex ${m.from === "user" ? "justify-end" : "justify-start"}`}
                         >
                             <div
-                                className={`max-w-[75%] px-3 py-2 rounded-2xl whitespace-pre-wrap ${
+                                className={`max-w-[75%] px-3 py-2 rounded-2xl whitespace-pre-wrap overflow-wrap ${
                                     m.from === "user"
                                         ? "bg-blue-600 text-white rounded-br-sm"
+                                        : m.text.startsWith("⚠️") ? "bg-red-900/50 text-red-200 rounded-bl-sm"
                                         : "bg-gray-700 text-gray-100 rounded-bl-sm"
                                     }`}
                             >
