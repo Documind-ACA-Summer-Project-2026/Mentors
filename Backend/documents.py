@@ -227,30 +227,18 @@ def delete_document(doc_id: str, current_user: dict = Depends(get_current_user))
         raise DatabaseError("Failed to delete document")
 
 def detect_intent(message: str) -> str:
-    """Detect intent of user message using LLM."""
-    prompt = f"""
-Classify the user's message into exactly one of these categories:
-- 'GREETING': A greeting only, such as 'hello' or 'good morning'.
-- 'SMALL_TALK': Simple social conversation with no factual question, such as 'how are you?'.
-- 'DOCUMENT_INQUIRY': Every factual or informational question, including questions
-  about uploaded documents and general-knowledge questions. Ambiguous messages
-  must also be classified as 'DOCUMENT_INQUIRY' so they can be checked against
-  the user's documents.
+    """Route only obvious social messages away from document retrieval."""
+    normalized = message.strip().lower().strip("!?.,")
 
-User message: "{message}"
+    if normalized in {
+        "hi", "hello", "hey", "good morning", "good afternoon", "good evening"
+    }:
+        return "GREETING"
+    if normalized in {"how are you", "how are you doing", "what's up", "whats up"}:
+        return "SMALL_TALK"
 
-Respond with ONLY one exact category name.
-"""
-    try:
-        response = LLM().generate(prompt).strip().upper()
-        if response in {"GREETING", "SMALL_TALK", "DOCUMENT_INQUIRY"}:
-            logger.info(f"Query intent: {response}")
-            return response
-        logger.warning(f"Unknown intent response {response!r}; treating as DOCUMENT_INQUIRY")
-        return "DOCUMENT_INQUIRY"
-    except Exception as e:
-        logger.warning(f"Intent detection failed, defaulting to DOCUMENT_INQUIRY: {e}")
-        return "DOCUMENT_INQUIRY"
+    # Factual, informational, and ambiguous messages must be grounded in documents.
+    return "DOCUMENT_INQUIRY"
 
 async def event_generator(chat_id: str, message: str, user_id: int):
     """Stream chat responses with error handling."""
@@ -271,8 +259,11 @@ async def event_generator(chat_id: str, message: str, user_id: int):
             # Retrieve top-5 contexts using hybrid semantic and keyword search.
             try:
                 contexts = retriever.retrieve(message, user_id=user_id, top_k=5)
-                prompt = PromptBuilder().build(message, contexts)
                 logger.info(f"Retrieved {len(contexts)} contexts for document inquiry")
+                if contexts:
+                    prompt = PromptBuilder().build(message, contexts)
+                else:
+                    direct_response = "How may I help you?"
             except Exception as e:
                 log_error(e, "event_generator retrieval")
                 yield f"data: {json.dumps({'error': 'Failed to retrieve document context. ' + str(e)})}\n\n"

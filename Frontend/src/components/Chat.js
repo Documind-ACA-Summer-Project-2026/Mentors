@@ -139,20 +139,30 @@ export default function Chat({ activeChatId }) {
             const decoder = new TextDecoder();
             let accumulatedText = "";
             let hasError = false;
+            let streamFinished = false;
+            let pendingLine = "";
 
             try {
-                while (true) {
+                while (!streamFinished) {
                     const { value, done } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        pendingLine += decoder.decode();
+                        if (pendingLine.trim() === "data: [DONE]") {
+                            streamFinished = true;
+                        }
+                        break;
+                    }
 
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split("\n");
+                    pendingLine += decoder.decode(value, { stream: true });
+                    const lines = pendingLine.split("\n");
+                    pendingLine = lines.pop() || "";
 
                     for (const line of lines) {
                         const trimmedLine = line.trim();
                         if (trimmedLine.startsWith("data: ")) {
                             const dataStr = trimmedLine.slice(6).trim();
                             if (dataStr === "[DONE]") {
+                                streamFinished = true;
                                 break;
                             }
                             try {
@@ -205,6 +215,8 @@ export default function Chat({ activeChatId }) {
                         return prev;
                     });
                 }
+            } finally {
+                setLoading(false);
             }
         } catch (err) {
             console.error("Chat error:", err);
@@ -233,6 +245,8 @@ export default function Chat({ activeChatId }) {
                     ];
                 }
             });
+        } finally {
+            setLoading(false);
         }
     };
 

@@ -128,6 +128,7 @@ class VectorStore:
             print("Hybrid search failed:", e)
             # Fallback to purely semantic search if FTS syntax query fails or is empty
             try:
+                conn.rollback()
                 with conn.cursor() as cur:
                     cur.execute(
                         """
