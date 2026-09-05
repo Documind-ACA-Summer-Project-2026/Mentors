@@ -80,7 +80,7 @@ The user interface will be accessible at [http://localhost:5173](http://localhos
 ## 🛠️ Port & API Proxying
 
 - The frontend utilizes the Next.js `rewrites` configuration (`Frontend/next.config.mjs`) to proxy all requests from the client at `/api/:path*` directly to the backend.
-- By default, it proxies to `http://localhost:8000`. You can configure a custom backend location (e.g. staging or production API servers) by setting `BACKEND_API_URL` in the frontend's `.env.local` file:
+- By default, it proxies to `https://documind-mentors.onrender.com/`. You can configure a custom backend location by setting `BACKEND_API_URL` in the frontend's `.env.local` file:
   ```env
-  BACKEND_API_URL=https://api.yourdomain.com
+  BACKEND_API_URL=https://documind-mentors.onrender.com/
   ```
