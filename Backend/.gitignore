@@ -1,0 +1,19 @@
+# Environment variables
+.env*
+# !.env.example
+# Ignore everything inside data/
+data/*
+
+# But keep the folder itself
+!data/.gitkeep
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+
+# VS Code
+.vscode/
